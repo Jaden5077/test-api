@@ -3,11 +3,36 @@ const express = require("express");
 const { google } = require("googleapis");
 const mongoose = require("mongoose");
 const crypto = require("crypto");
+const swaggerJsdoc = require("swagger-jsdoc");
+const swaggerUi = require("swagger-ui-express");
 
 const app = express();
 app.use(express.json()); // Middleware to parse JSON bodies
 
 const PORT = process.env.PORT || 3000;
+
+// ==========================================
+// 0. Swagger Configuration
+// ==========================================
+const swaggerOptions = {
+  definition: {
+    openapi: "3.0.0",
+    info: {
+      title: "Calendar Booking Agent API",
+      version: "1.0.0",
+      description: "API for managing Google Calendar bookings via an AI agent",
+    },
+    servers: [
+      {
+        url: `http://localhost:${PORT}`,
+      },
+    ],
+  },
+  apis: ["./server.js"], // Path to the API docs
+};
+
+const specs = swaggerJsdoc(swaggerOptions);
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
 
 // ==========================================
 // 1. Database & Schema Setup (MongoDB)
@@ -67,7 +92,16 @@ const SCOPES = [
 // 4. Routes: Auth & Onboarding
 // ==========================================
 
-// Generate login link
+/**
+ * @swagger
+ * /auth:
+ *   get:
+ *     summary: Generate Google OAuth2 login link
+ *     description: Returns an HTML page with a link to Google OAuth2 consent screen.
+ *     responses:
+ *       200:
+ *         description: Login page with link.
+ */
 app.get("/auth", (req, res) => {
   const authUrl = oAuth2Client.generateAuthUrl({
     access_type: "offline",
@@ -79,7 +113,25 @@ app.get("/auth", (req, res) => {
   );
 });
 
-// OAuth Callback
+/**
+ * @swagger
+ * /oauth2callback:
+ *   get:
+ *     summary: OAuth2 callback handler
+ *     description: Handles the callback from Google OAuth2, retrieves tokens, and saves them to the database.
+ *     parameters:
+ *       - in: query
+ *         name: code
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Authorization code from Google.
+ *     responses:
+ *       200:
+ *         description: Success message after saving tokens.
+ *       500:
+ *         description: Internal server error during token retrieval or database saving.
+ */
 app.get("/oauth2callback", async (req, res) => {
   const { code } = req.query;
   try {
@@ -114,13 +166,71 @@ app.get("/oauth2callback", async (req, res) => {
 // ==========================================
 // 5. Routes: Booking Logic API
 // ==========================================
+
+/**
+ * @swagger
+ * /book-meeting:
+ *   post:
+ *     summary: Book a meeting on Google Calendar
+ *     description: Checks for availability and books a meeting if the slot is free.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - targetEmail
+ *               - startTime
+ *               - endTime
+ *             properties:
+ *               targetEmail:
+ *                 type: string
+ *                 description: The email of the person to book the meeting for.
+ *               startTime:
+ *                 type: string
+ *                 format: date-time
+ *                 description: Meeting start time in ISO 8601 format (UTC).
+ *               endTime:
+ *                 type: string
+ *                 format: date-time
+ *                 description: Meeting end time in ISO 8601 format (UTC).
+ *               meetingTitle:
+ *                 type: string
+ *                 description: Title of the meeting.
+ *     responses:
+ *       200:
+ *         description: Success status ("ok" or "not ok").
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   enum: ["ok", "not ok"]
+ *       400:
+ *         description: Missing required fields.
+ *       404:
+ *         description: User not found in database.
+ *       500:
+ *         description: Internal server error.
+ */
 app.post("/book-meeting", async (req, res) => {
-  const { targetEmail, startTime, endTime } = req.body;
+  const { targetEmail, startTime, endTime, meetingTitle } = req.body;
 
   if (!targetEmail || !startTime || !endTime) {
     return res
       .status(400)
       .json({ status: "error", reason: "Missing required fields" });
+  }
+
+  // Check if start time is before end time
+  if (new Date(startTime) >= new Date(endTime)) {
+    return res.status(400).json({
+      status: "error",
+      reason: "Start time must be before end time",
+    });
   }
 
   try {
@@ -164,7 +274,7 @@ app.post("/book-meeting", async (req, res) => {
 
     // 5. If FREE: Create the calendar event
     const event = {
-      summary: "Scheduled Meeting via Agent",
+      summary: meetingTitle || "Scheduled Meeting via Agent",
       description: "Auto-generated meeting.",
       start: { dateTime: startTime },
       end: { dateTime: endTime },
@@ -190,6 +300,13 @@ app.post("/book-meeting", async (req, res) => {
 // ==========================================
 // 6. Start Server
 // ==========================================
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(
+      `📄 Documentation available at http://localhost:${PORT}/api-docs`,
+    );
+  });
+}
+
+module.exports = app;
