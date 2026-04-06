@@ -59,6 +59,7 @@ const oAuth2Client = new google.auth.OAuth2(
 // Updated scopes: Allow creating events and fetching email
 const SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
